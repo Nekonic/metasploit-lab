@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+msfrpcd.log
+/tmp/demo_uploads/
+payload/game.py
+*.DS_Store
