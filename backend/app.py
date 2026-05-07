@@ -31,6 +31,7 @@ msf = MsfClient.get_instance()
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 _last_sessions = {}
+_listener_job_id = None
 
 
 # ── 백그라운드 태스크 ─────────────────────────────────────────────────────────
@@ -177,8 +178,19 @@ def _inject_task(sid, template_path, output_path, output_name, lhost, lport):
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 
+def _emit_listener_status(running, job_id=None, message=None, to=None):
+    payload = {"running": running, "job_id": job_id, "lhost": LHOST, "lport": LPORT}
+    if message:
+        payload["message"] = message
+    if to:
+        socketio.emit("listener_status", payload, room=to)
+    else:
+        socketio.emit("listener_status", payload)
+
+
 @socketio.on("connect")
 def on_connect():
+    global _listener_job_id
     if not msf.is_connected():
         ok = msf.connect()
         if not ok:
@@ -186,6 +198,12 @@ def on_connect():
     sessions = msf.get_sessions()
     emit("session_update", {"sessions": list(sessions.values())})
     emit("system_event", {"level": "info", "message": f"대시보드 연결됨 — LHOST: {LHOST}:{LPORT}"})
+    # verify listener job still alive
+    if _listener_job_id is not None:
+        jobs = msf.get_jobs()
+        if str(_listener_job_id) not in {str(k) for k in jobs.keys()}:
+            _listener_job_id = None
+    _emit_listener_status(_listener_job_id is not None, _listener_job_id, to=request.sid)
 
 
 @socketio.on("request_sessions")
@@ -245,6 +263,37 @@ def on_kill_port():
         emit("system_event", {"level": "info", "message": f"포트 {LPORT} 강제 종료됨", "timestamp": ts})
     except Exception as e:
         emit("system_event", {"level": "error", "message": f"포트 종료 실패: {e}", "timestamp": ts})
+
+
+@socketio.on("start_listener")
+def on_start_listener():
+    global _listener_job_id
+    if _listener_job_id is not None:
+        emit("listener_status", {"running": True, "job_id": _listener_job_id, "lhost": LHOST, "lport": LPORT,
+                                  "message": f"이미 실행 중 (job {_listener_job_id})"})
+        return
+    job_id, err = msf.start_listener(LHOST, LPORT)
+    if err:
+        emit("system_event", {"level": "error", "message": f"리스너 시작 실패: {err}"})
+        _emit_listener_status(False, None, f"시작 실패: {err}", to=request.sid)
+    else:
+        _listener_job_id = job_id
+        _emit_listener_status(True, job_id, f"리스너 시작됨 — {LHOST}:{LPORT} (job {job_id})")
+
+
+@socketio.on("stop_listener")
+def on_stop_listener(data):
+    global _listener_job_id
+    job_id = data.get("job_id", _listener_job_id)
+    if job_id is None:
+        emit("listener_status", {"running": False, "job_id": None, "lhost": LHOST, "lport": LPORT})
+        return
+    ok, err = msf.stop_listener(job_id)
+    if ok:
+        _listener_job_id = None
+        _emit_listener_status(False, None, f"리스너 중지됨 (job {job_id})")
+    else:
+        emit("system_event", {"level": "error", "message": f"리스너 중지 실패: {err}"})
 
 
 @socketio.on("inject_payload")

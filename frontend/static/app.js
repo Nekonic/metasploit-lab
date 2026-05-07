@@ -2,6 +2,7 @@ const socket = io({ transports: ["websocket"] });
 
 let selectedSessionId = null;
 let templatePath = null;
+let listenerJobId = null;
 const cmdHistory = [];
 let histIdx = -1;
 
@@ -262,6 +263,35 @@ document.getElementById("btn-inject").addEventListener("click", () => {
   setInjectStatus("msfvenom 실행 중... (30~60초 소요)", 10);
   socket.emit("inject_payload", { template_path: templatePath });
   logEntry("info", "⚡ 셸코드 주입 시작 (msfvenom -x -k)");
+});
+
+// ── 리스너 시작/중지 ──────────────────────────────────────────────────────────
+
+socket.on("listener_status", ({ running, job_id, lhost, lport, message }) => {
+  listenerJobId = running ? job_id : null;
+  const btn = document.getElementById("btn-listener-toggle");
+  const status = document.getElementById("listener-status");
+  if (running) {
+    btn.textContent = "📡 리스너 중지";
+    btn.className = "bg-red-900 hover:bg-red-800 text-red-300 px-4 py-1.5 rounded border border-red-700 text-xs transition-all";
+    status.textContent = `${lhost}:${lport} 대기중`;
+    status.className = "text-xs text-green-400 font-mono";
+  } else {
+    btn.textContent = "📡 리스너 시작";
+    btn.className = "bg-green-900 hover:bg-green-800 text-green-300 px-4 py-1.5 rounded border border-green-700 text-xs transition-all";
+    status.textContent = "";
+  }
+  if (message) logEntry(running ? "success" : "warn", `📡 ${message}`);
+});
+
+document.getElementById("btn-listener-toggle").addEventListener("click", () => {
+  if (listenerJobId !== null) {
+    socket.emit("stop_listener", { job_id: listenerJobId });
+    logEntry("warn", "📡 리스너 중지 요청...");
+  } else {
+    socket.emit("start_listener", {});
+    logEntry("info", "📡 리스너 시작 요청...");
+  }
 });
 
 // ── Kill All / Port Kill ──────────────────────────────────────────────────────
